@@ -1,0 +1,529 @@
+// Key definitions
+#define KEY_LEFT_GUI    0x83
+#define KEY_LEFT_SHIFT  0x81
+#define KEY_RIGHT_ARROW 0xD7
+#define KEY_LEFT_ARROW  0xD8
+#define KEY_F5          0xC2
+#define KEY_RETURN      0xB0
+#define MOUSE_LEFT      0x01
+
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_gap_ble_api.h"
+#include "esp_task_wdt.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+
+#include <BleCombo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+BleCombo bleCombo("CtrlX", "CtrlX", 100);
+
+// Joystick
+#define VRX 34
+#define VRY 35
+#define JSW 25
+
+// Buttons
+#define BTN_UP   26
+#define BTN_DOWN 27
+
+// Battery
+#define BAT_PIN 32
+
+int menuIndex = 0;
+bool inMenu = true;
+
+unsigned long lastActivity    = 0;
+unsigned long buttonPressStart = 0;
+unsigned long downPressStart   = 0;
+
+bool upPressed   = false;
+bool downPressed = false;
+bool jswPressed  = false;
+
+const unsigned long sleepTime     = 180000;
+const unsigned long longPressTime = 1000;
+
+String modes[6] = {
+  "Mouse",
+  "Presentation",
+  "Gaming",
+  "Media",
+  "System",
+  "Eye Anim"
+};
+
+// ================= EYE ANIMATION STATE =================
+int eyeX = 64;
+int eyeY = 32;
+bool eyeBlink     = false;
+unsigned long lastBlink = 0;
+unsigned long blinkInterval = 3000;
+
+
+// ================= BATTERY =================
+int getBatteryPercent() {
+  int raw = analogRead(BAT_PIN);
+  float voltage = raw * (3.3 / 4095.0) * 2.0;
+  int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100.0);
+  percent = constrain(percent, 0, 100);
+  return percent;
+}
+
+
+// ================= SETUP =================
+void setup() {
+
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+  Serial.begin(115200);
+  Serial.println("Booting CtrlX...");
+
+  pinMode(JSW,      INPUT_PULLUP);
+  pinMode(BTN_UP,   INPUT_PULLUP);
+  pinMode(BTN_DOWN, INPUT_PULLUP);
+  pinMode(VRX, INPUT);
+  pinMode(VRY, INPUT);
+
+  Wire.begin();
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 not found!");
+    while (true);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(3);
+  display.setTextColor(WHITE);
+  display.setCursor(10, 20);
+  display.println("CtrlX");
+  display.display();
+  delay(2000);
+
+  // Lower TX power to reduce current spike
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_N12);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV,     ESP_PWR_LVL_N12);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN,    ESP_PWR_LVL_N12);
+
+  Serial.println("Starting BLE Combo...");
+
+  // Explicitly start BT controller before BleCombo
+  btStart();
+  delay(500);
+
+  bleCombo.begin();
+
+  // Show "Pairing..." on screen while waiting for BLE
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(20, 25);
+  display.println("BLE Starting...");
+  display.display();
+
+  for (int i = 0; i < 40; i++) {
+    esp_task_wdt_reset();
+    delay(100);
+    yield();
+
+    // Animate dots while waiting
+    if (i % 10 == 0) {
+      display.clearDisplay();
+      display.setCursor(20, 20);
+      display.println("BLE Starting");
+      display.setCursor(20, 35);
+      for (int d = 0; d < (i / 10) + 1; d++) display.print(".");
+      display.display();
+    }
+  }
+
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 1);
+  Serial.println("BLE Ready!");
+
+  // Show connected status
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(15, 25);
+  if (bleCombo.isConnected()) {
+    display.println("BLE Connected!");
+  } else {
+    display.println("Waiting for");
+    display.setCursor(20, 38);
+    display.println("device...");
+  }
+  display.display();
+  delay(1500);
+
+  lastActivity = millis();
+}
+
+
+// ================= DRAW MENU =================
+void drawMenu() {
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  display.setCursor(0, 0);
+  display.println("CtrlX");
+
+  int bat = getBatteryPercent();
+  display.setCursor(90, 0);
+  display.print(bat);
+  display.print("%");
+
+  // BLE status indicator
+  display.setCursor(70, 0);
+  if (bleCombo.isConnected()) {
+    display.print("BT");
+  } else {
+    display.print("--");
+  }
+
+  for (int i = 0; i < 6; i++) {
+    int y = 14 + (i * 9);
+    if (i == menuIndex) {
+      display.fillRect(0, y - 1, 128, 9, WHITE);
+      display.setTextColor(BLACK);
+      display.setCursor(5, y);
+      display.print(modes[i]);
+      display.setTextColor(WHITE);
+    } else {
+      display.setCursor(5, y);
+      display.print(modes[i]);
+    }
+  }
+
+  display.display();
+}
+
+
+// ================= DRAW ACTIVE MODE SCREEN =================
+void drawModeScreen(int mode) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  // Mode name header
+  display.fillRect(0, 0, 128, 12, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor(5, 2);
+  display.print(modes[mode]);
+  display.setTextColor(WHITE);
+
+  // BLE status
+  display.setCursor(0, 18);
+  if (bleCombo.isConnected()) {
+    display.println("BLE: Connected");
+  } else {
+    display.println("BLE: Searching..");
+  }
+
+  // Hint to exit
+  display.setCursor(0, 50);
+  display.setTextSize(1);
+  display.print("Hold DOWN to exit");
+
+  display.display();
+}
+
+
+// ================= ACCELERATION =================
+float applyAcceleration(int rawValue) {
+  int center   = 2048;
+  int deadzone = 150;
+  int dist = rawValue - center;
+  if (abs(dist) < deadzone) return 0;
+  float normalized = (float)dist / 2048.0;
+  float accel = normalized * normalized * 25;
+  if (dist < 0) accel *= -1;
+  return accel;
+}
+
+
+// ================= EYE ANIMATION =================
+void drawEyes(int pupilX, int pupilY, bool blink) {
+
+  display.clearDisplay();
+
+  // Left eye white
+  if (blink) {
+    display.fillRoundRect(10, 24, 44, 16, 8, WHITE);
+  } else {
+    display.drawCircle(32, 32, 20, WHITE);
+    display.fillCircle(32, 32, 18, WHITE);
+    // Left pupil (follows joystick, clamped inside eye)
+    int lpx = constrain(pupilX - 32, -10, 10);
+    int lpy = constrain(pupilY - 32, -10, 10);
+    display.fillCircle(32 + lpx, 32 + lpy, 7, BLACK);
+    display.fillCircle(32 + lpx - 2, 32 + lpy - 2, 2, WHITE); // shine
+    display.drawCircle(32, 32, 20, WHITE); // redraw outline
+  }
+
+  // Right eye white
+  if (blink) {
+    display.fillRoundRect(74, 24, 44, 16, 8, WHITE);
+  } else {
+    display.drawCircle(96, 32, 20, WHITE);
+    display.fillCircle(96, 32, 18, WHITE);
+    // Right pupil
+    int rpx = constrain(pupilX - 32, -10, 10);
+    int rpy = constrain(pupilY - 32, -10, 10);
+    display.fillCircle(96 + rpx, 32 + rpy, 7, BLACK);
+    display.fillCircle(96 + rpx - 2, 32 + rpy - 2, 2, WHITE); // shine
+    display.drawCircle(96, 32, 20, WHITE);
+  }
+
+  display.display();
+}
+
+void runEyeAnimation() {
+
+  int rawX = analogRead(VRX);
+  int rawY = analogRead(VRY);
+
+  // Map joystick to pupil offset
+  int px = map(rawX, 0, 4095, -10, 10);
+  int py = map(rawY, 0, 4095, -10, 10);
+
+  // Auto blink
+  unsigned long now = millis();
+  if (now - lastBlink > blinkInterval) {
+    eyeBlink = true;
+    if (now - lastBlink > blinkInterval + 120) {
+      eyeBlink = false;
+      lastBlink = now;
+      blinkInterval = random(2000, 5000);
+    }
+  }
+
+  // JSW press = heart eyes
+  if (digitalRead(JSW) == LOW) {
+    display.clearDisplay();
+    display.setTextSize(3);
+    display.setCursor(18, 16);
+    display.print("<3 <3");
+    display.display();
+    delay(600);
+    return;
+  }
+
+  drawEyes(px + 32, py + 32, eyeBlink);
+  delay(30);
+}
+
+
+// ================= MODE LOGIC =================
+void runMode(int mode) {
+
+  int x = analogRead(VRX);
+  int y = analogRead(VRY);
+
+  // ---------- MODE 0: Mouse ----------
+  if (mode == 0 && bleCombo.isConnected()) {
+    float mx = applyAcceleration(x);
+    float my = applyAcceleration(y);
+    if (mx != 0 || my != 0) {
+      bleCombo.move((int8_t)mx, (int8_t)my);
+    }
+    if (digitalRead(JSW) == LOW && !jswPressed) {
+      bleCombo.click(MOUSE_LEFT);
+      jswPressed = true;
+      delay(200);
+    }
+    if (digitalRead(JSW) == HIGH) jswPressed = false;
+  }
+
+  // ---------- MODE 1: Presentation ----------
+  if (mode == 1 && bleCombo.isConnected()) {
+    if (x > 3500) { bleCombo.write(KEY_RIGHT_ARROW); delay(250); }
+    if (x < 500)  { bleCombo.write(KEY_LEFT_ARROW);  delay(250); }
+    if (digitalRead(JSW) == LOW && !jswPressed) {
+      bleCombo.write(KEY_F5);
+      jswPressed = true;
+      delay(300);
+    }
+    if (digitalRead(JSW) == HIGH) jswPressed = false;
+  }
+
+  // ---------- MODE 2: Gaming ----------
+  if (mode == 2 && bleCombo.isConnected()) {
+    if (y < 500)       { bleCombo.press('w'); }
+    else if (y > 3500) { bleCombo.press('s'); }
+    else { bleCombo.release('w'); bleCombo.release('s'); }
+
+    if (x < 500)       { bleCombo.press('a'); }
+    else if (x > 3500) { bleCombo.press('d'); }
+    else { bleCombo.release('a'); bleCombo.release('d'); }
+
+    if (digitalRead(JSW) == LOW && !jswPressed) {
+      bleCombo.press(' ');
+      jswPressed = true;
+    }
+    if (digitalRead(JSW) == HIGH && jswPressed) {
+      bleCombo.release(' ');
+      jswPressed = false;
+    }
+  }
+
+  // ---------- MODE 3: Media ----------
+  if (mode == 3 && bleCombo.isConnected()) {
+    if (y < 500)  { bleCombo.write(KEY_MEDIA_VOLUME_UP);       delay(200); }
+    if (y > 3500) { bleCombo.write(KEY_MEDIA_VOLUME_DOWN);     delay(200); }
+    if (x > 3500) { bleCombo.write(KEY_MEDIA_NEXT_TRACK);      delay(300); }
+    if (x < 500)  { bleCombo.write(KEY_MEDIA_PREVIOUS_TRACK);  delay(300); }
+    if (digitalRead(JSW) == LOW && !jswPressed) {
+      bleCombo.write(KEY_MEDIA_PLAY_PAUSE);
+      jswPressed = true;
+      delay(300);
+    }
+    if (digitalRead(JSW) == HIGH) jswPressed = false;
+  }
+
+  // ---------- MODE 4: System ----------
+  if (mode == 4 && bleCombo.isConnected()) {
+    if (digitalRead(JSW) == LOW && !jswPressed) {
+      bleCombo.write(KEY_LEFT_GUI);
+      jswPressed = true;
+      delay(300);
+    }
+    if (digitalRead(JSW) == HIGH) jswPressed = false;
+
+    if (y < 500) {
+      bleCombo.press(KEY_LEFT_GUI); bleCombo.press('l');
+      bleCombo.releaseAll(); delay(500);
+    }
+    if (y > 3500) {
+      bleCombo.press(KEY_LEFT_GUI); bleCombo.press('d');
+      bleCombo.releaseAll(); delay(500);
+    }
+    if (x < 500) {
+      bleCombo.press(KEY_LEFT_GUI); bleCombo.press(KEY_LEFT_SHIFT);
+      bleCombo.press('s'); bleCombo.releaseAll(); delay(500);
+    }
+    if (x > 3500) {
+      bleCombo.press(KEY_LEFT_GUI); bleCombo.press('r');
+      bleCombo.releaseAll(); delay(800);
+      bleCombo.print("chrome"); delay(300);
+      bleCombo.write(KEY_RETURN); delay(500);
+    }
+  }
+
+  // ---------- MODE 5: Eye Animation ----------
+  if (mode == 5) {
+    runEyeAnimation();
+    // Skip lastActivity update so it doesn't sleep during eye mode
+    return;
+  }
+
+  lastActivity = millis();
+}
+
+
+// ================= LOOP =================
+void loop() {
+
+  esp_task_wdt_reset();
+
+  if (inMenu) {
+
+    // BTN_UP short = scroll up, long = activate mode
+    if (digitalRead(BTN_UP) == LOW && !upPressed) {
+      buttonPressStart = millis();
+      upPressed = true;
+    }
+
+    if (digitalRead(BTN_UP) == HIGH && upPressed) {
+      unsigned long pressTime = millis() - buttonPressStart;
+      if (pressTime >= longPressTime) {
+        // Activate selected mode
+        inMenu = false;
+        drawModeScreen(menuIndex);
+        delay(800);
+      } else {
+        menuIndex--;
+        if (menuIndex < 0) menuIndex = 5;
+      }
+      upPressed = false;
+      lastActivity = millis();
+      delay(200);
+    }
+
+    // BTN_DOWN = scroll down
+    if (digitalRead(BTN_DOWN) == LOW && !downPressed) {
+      downPressStart = millis();
+      downPressed = true;
+    }
+
+    if (digitalRead(BTN_DOWN) == HIGH && downPressed) {
+      unsigned long pressTime = millis() - downPressStart;
+      if (pressTime < longPressTime) {
+        menuIndex++;
+        if (menuIndex > 5) menuIndex = 0;
+      }
+      downPressed = false;
+      lastActivity = millis();
+      delay(200);
+    }
+
+    drawMenu();
+
+  } else {
+
+    // Show mode name on screen while active
+    // Only redraw if not eye mode (eye mode handles its own display)
+    if (menuIndex != 5) {
+      drawModeScreen(menuIndex);
+    }
+
+    runMode(menuIndex);
+
+    // BTN_DOWN long press = exit mode back to menu
+    if (digitalRead(BTN_DOWN) == LOW && !downPressed) {
+      downPressStart = millis();
+      downPressed = true;
+    }
+
+    if (digitalRead(BTN_DOWN) == HIGH && downPressed) {
+      unsigned long pressTime = millis() - downPressStart;
+      if (pressTime >= longPressTime) {
+        // Exit mode → back to menu
+        bleCombo.releaseAll();
+        inMenu = true;
+
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(WHITE);
+        display.setCursor(20, 25);
+        display.println("Back to Menu...");
+        display.display();
+        delay(600);
+      }
+      downPressed = false;
+      lastActivity = millis();
+      delay(200);
+    }
+  }
+
+  // Sleep after inactivity (skip in eye animation mode)
+  if (menuIndex != 5 && millis() - lastActivity > sleepTime) {
+    bleCombo.releaseAll();
+    display.clearDisplay();
+    display.setCursor(30, 28);
+    display.println("Sleeping...");
+    display.display();
+    delay(2000);
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    esp_deep_sleep_start();
+  }
+}
