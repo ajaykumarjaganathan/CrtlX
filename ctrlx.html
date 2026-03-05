@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CtrlX — BLE Controller</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111116;
+    --border: #1e1e28;
+    --accent: #00ffaa;
+    --accent2: #ff3c6e;
+    --accent3: #5c6bff;
+    --text: #e8e8f0;
+    --muted: #555570;
+    --mono: 'Space Mono', monospace;
+    --display: 'Bebas Neue', sans-serif;
+    --body: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px);
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  .hero {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    padding: 0 80px;
+    gap: 60px;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .hero::after {
+    content: '';
+    position: absolute;
+    top: -200px; right: -200px;
+    width: 700px; height: 700px;
+    background: radial-gradient(circle, rgba(0,255,170,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.2s forwards;
+  }
+
+  .hero-title {
+    font-family: var(--display);
+    font-size: clamp(80px, 10vw, 140px);
+    line-height: 0.9;
+    letter-spacing: 0.02em;
+    color: var(--text);
+    opacity: 0;
+    animation: fadeUp 0.6s 0.35s forwards;
+  }
+
+  .hero-title span { color: var(--accent); }
+
+  .hero-sub {
+    margin-top: 24px;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.7;
+    max-width: 420px;
+    font-weight: 300;
+    letter-spacing: 0.02em;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.5s forwards;
+  }
+
+  .hero-tags {
+    display: flex;
+    gap: 10px;
+    margin-top: 32px;
+    flex-wrap: wrap;
+    opacity: 0;
+    animation: fadeUp 0.6s 0.65s forwards;
+  }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .tag.accent { border-color: var(--accent); color: var(--accent); }
+
+  .device-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    animation: fadeIn 1s 0.8s forwards;
+  }
+
+  .device {
+    position: relative;
+    width: 220px;
+    height: 320px;
+    background: linear-gradient(145deg, #1a1a22, #0f0f14);
+    border: 1px solid #2a2a38;
+    border-radius: 18px;
+    box-shadow: 0 0 0 1px rgba(0,255,170,0.08), 0 40px 80px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .screen {
+    position: absolute;
+    top: 24px; left: 50%; transform: translateX(-50%);
+    width: 128px; height: 64px;
+    background: #000;
+    border: 1px solid #222;
+    border-radius: 2px;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(0,255,170,0.15), inset 0 0 10px rgba(0,0,0,0.5);
+  }
+
+  .screen-content {
+    padding: 4px;
+    font-family: var(--mono);
+    font-size: 7px;
+    color: var(--accent);
+    line-height: 1.4;
+  }
+
+  .screen-title { font-size: 9px; font-weight: 700; margin-bottom: 2px; }
+
+  .screen-bat {
+    position: absolute;
+    top: 4px; right: 5px;
+    font-size: 7px;
+    color: var(--accent);
+    font-family: var(--mono);
+  }
+
+  .screen-item { padding: 1px 3px; border-radius: 1px; color: rgba(0,255,170,0.5); }
+  .screen-item.active { background: var(--accent); color: #000; }
+
+  .joystick-base {
+    position: absolute;
+    bottom: 60px; left: 50%; transform: translateX(-50%);
+    width: 70px; height: 70px;
+    background: radial-gradient(circle at 30% 30%, #2a2a38, #111118);
+    border: 1px solid #2a2a38;
+    border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .joystick-stick {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    width: 30px; height: 30px;
+    background: radial-gradient(circle at 35% 30%, #3a3a50, #1a1a28);
+    border-radius: 50%;
+    border: 1px solid #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    animation: joyFloat 3s ease-in-out infinite;
+  }
+
+  @keyframes joyFloat {
+    0%, 100% { transform: translate(-50%,-50%); }
+    33% { transform: translate(calc(-50% + 5px), calc(-50% - 4px)); }
+    66% { transform: translate(calc(-50% - 4px), calc(-50% + 5px)); }
+  }
+
+  .btn-up {
+    position: absolute;
+    top: 100px; right: 20px;
+    width: 18px; height: 18px;
+    background: #1a1a24;
+    border: 1px solid #2a2a38;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .btn-down {
+    position: absolute;
+    top: 126px; right: 20px;
+    width: 18px; height: 18px;
+    background: #1a1a24;
+    border: 1px solid #2a2a38;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .ble-dot {
+    position: absolute;
+    bottom: 20px; right: 22px;
+    width: 8px; height: 8px;
+    background: var(--accent3);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--accent3);
+    animation: blePulse 2s ease-in-out infinite;
+  }
+
+  @keyframes blePulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 10px var(--accent3); }
+    50% { opacity: 0.4; box-shadow: 0 0 4px var(--accent3); }
+  }
+
+  .ticker-wrap {
+    overflow: hidden;
+    background: var(--accent);
+    padding: 10px 0;
+  }
+
+  .ticker-track {
+    display: flex;
+    gap: 60px;
+    animation: ticker 16s linear infinite;
+    white-space: nowrap;
+  }
+
+  .ticker-item {
+    font-family: var(--display);
+    font-size: 16px;
+    letter-spacing: 0.15em;
+    color: var(--bg);
+    flex-shrink: 0;
+  }
+
+  @keyframes ticker {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  .modes-section {
+    padding: 100px 80px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .section-title {
+    font-family: var(--display);
+    font-size: clamp(48px, 6vw, 80px);
+    line-height: 0.95;
+    margin-bottom: 60px;
+    color: var(--text);
+  }
+
+  .modes-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  .mode-card {
+    background: var(--surface);
+    padding: 32px 24px;
+    position: relative;
+    overflow: hidden;
+    transition: background 0.2s;
+  }
+
+  .mode-card:hover { background: #151520; }
+
+  .mode-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .mode-card:hover::before { opacity: 1; }
+  .mode-card:nth-child(1)::before { background: var(--accent); }
+  .mode-card:nth-child(2)::before { background: var(--accent2); }
+  .mode-card:nth-child(3)::before { background: var(--accent3); }
+  .mode-card:nth-child(4)::before { background: #ffaa00; }
+  .mode-card:nth-child(5)::before { background: #aa44ff; }
+
+  .mode-index {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    margin-bottom: 16px;
+  }
+
+  .mode-icon { font-size: 28px; margin-bottom: 16px; display: block; }
+
+  .mode-name {
+    font-family: var(--display);
+    font-size: 28px;
+    letter-spacing: 0.05em;
+    margin-bottom: 14px;
+    color: var(--text);
+  }
+
+  .mode-controls { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+
+  .mode-controls li {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--mono);
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    line-height: 1.4;
+  }
+
+  .ctrl-key {
+    display: inline-block;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    font-size: 9px;
+    color: var(--text);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .specs-section {
+    padding: 100px 80px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 80px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .spec-group-title {
+    font-family: var(--display);
+    font-size: 48px;
+    margin-bottom: 40px;
+    line-height: 0.95;
+  }
+
+  .spec-table { width: 100%; border-collapse: collapse; }
+  .spec-table tr { border-bottom: 1px solid var(--border); }
+  .spec-table td { padding: 14px 0; font-size: 13px; }
+
+  .spec-table td:first-child {
+    font-family: var(--mono);
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    width: 45%;
+  }
+
+  .spec-table td:last-child { color: var(--text); font-weight: 300; }
+  .spec-highlight { color: var(--accent) !important; }
+
+  .pinout-section {
+    padding: 100px 80px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-top: 50px;
+  }
+
+  .pin-card {
+    background: var(--surface);
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .pin-label { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.1em; }
+  .pin-num { font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--accent); }
+  .pin-role { font-size: 12px; color: var(--text); margin-top: 4px; font-weight: 300; }
+
+  footer {
+    padding: 60px 80px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .footer-brand { font-family: var(--display); font-size: 32px; color: var(--accent); letter-spacing: 0.1em; }
+
+  .footer-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-align: right;
+    line-height: 1.8;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; padding: 60px 32px; }
+    .device-wrap { display: none; }
+    .modes-grid { grid-template-columns: 1fr 1fr; }
+    .specs-section { grid-template-columns: 1fr; gap: 50px; }
+    .modes-section, .specs-section, .pinout-section, footer { padding: 60px 32px; }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div>
+    <div class="hero-label">ESP32 // BLE HID Controller</div>
+    <h1 class="hero-title">Ctrl<span>X</span></h1>
+    <p class="hero-sub">A wireless Bluetooth HID controller built on ESP32. Five modes, zero latency. Mouse, presentation, gaming, media, and system control — all from one device.</p>
+    <div class="hero-tags">
+      <span class="tag accent">BLE 4.2</span>
+      <span class="tag">ESP32</span>
+      <span class="tag">SSD1306 OLED</span>
+      <span class="tag">BleCombo</span>
+      <span class="tag">Deep Sleep</span>
+    </div>
+  </div>
+
+  <div class="device-wrap">
+    <div class="device">
+      <div class="screen">
+        <div class="screen-content">
+          <div class="screen-title">CtrlX</div>
+          <div class="screen-bat">78%</div>
+          <div class="screen-item active">&#9658; Mouse</div>
+          <div class="screen-item">&nbsp; Presentation</div>
+          <div class="screen-item">&nbsp; Gaming</div>
+          <div class="screen-item">&nbsp; Media</div>
+          <div class="screen-item">&nbsp; System</div>
+        </div>
+      </div>
+      <div class="btn-up"></div>
+      <div class="btn-down"></div>
+      <div class="joystick-base">
+        <div class="joystick-stick"></div>
+      </div>
+      <div class="ble-dot"></div>
+    </div>
+  </div>
+</section>
+
+<div class="ticker-wrap">
+  <div class="ticker-track">
+    <span class="ticker-item">MOUSE</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">PRESENTATION</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">GAMING</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">MEDIA</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">SYSTEM</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">MOUSE</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">PRESENTATION</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">GAMING</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">MEDIA</span>
+    <span class="ticker-item">&#10022;</span>
+    <span class="ticker-item">SYSTEM</span>
+    <span class="ticker-item">&#10022;</span>
+  </div>
+</div>
+
+<section class="modes-section">
+  <div class="section-label">Input Modes</div>
+  <h2 class="section-title">Five Modes.<br>One Device.</h2>
+  <div class="modes-grid">
+    <div class="mode-card">
+      <div class="mode-index">MODE 00</div>
+      <span class="mode-icon">&#128433;</span>
+      <div class="mode-name">Mouse</div>
+      <ul class="mode-controls">
+        <li><span class="ctrl-key">JOY</span> Move cursor (accelerated)</li>
+        <li><span class="ctrl-key">JSW</span> Left click</li>
+      </ul>
+    </div>
+    <div class="mode-card">
+      <div class="mode-index">MODE 01</div>
+      <span class="mode-icon">&#128253;</span>
+      <div class="mode-name">Presentation</div>
+      <ul class="mode-controls">
+        <li><span class="ctrl-key">JOY &rarr;</span> Next slide</li>
+        <li><span class="ctrl-key">JOY &larr;</span> Previous slide</li>
+        <li><span class="ctrl-key">JSW</span> Start slideshow (F5)</li>
+      </ul>
+    </div>
+    <div class="mode-card">
+      <div class="mode-index">MODE 02</div>
+      <span class="mode-icon">&#127918;</span>
+      <div class="mode-name">Gaming</div>
+      <ul class="mode-controls">
+        <li><span class="ctrl-key">JOY</span> WASD movement</li>
+        <li><span class="ctrl-key">JSW</span> Spacebar / jump</li>
+      </ul>
+    </div>
+    <div class="mode-card">
+      <div class="mode-index">MODE 03</div>
+      <span class="mode-icon">&#127925;</span>
+      <div class="mode-name">Media</div>
+      <ul class="mode-controls">
+        <li><span class="ctrl-key">JOY &uarr;&darr;</span> Volume up/down</li>
+        <li><span class="ctrl-key">JOY &rarr;&larr;</span> Next/prev track</li>
+        <li><span class="ctrl-key">JSW</span> Play / pause</li>
+      </ul>
+    </div>
+    <div class="mode-card">
+      <div class="mode-index">MODE 04</div>
+      <span class="mode-icon">&#9881;&#65039;</span>
+      <div class="mode-name">System</div>
+      <ul class="mode-controls">
+        <li><span class="ctrl-key">JSW</span> Win key</li>
+        <li><span class="ctrl-key">JOY &uarr;</span> Lock PC (Win+L)</li>
+        <li><span class="ctrl-key">JOY &darr;</span> Desktop (Win+D)</li>
+        <li><span class="ctrl-key">JOY &larr;</span> Screenshot</li>
+        <li><span class="ctrl-key">JOY &rarr;</span> Open Chrome</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="specs-section">
+  <div>
+    <div class="section-label">Hardware</div>
+    <h2 class="spec-group-title">Specs</h2>
+    <table class="spec-table">
+      <tr><td>MCU</td><td class="spec-highlight">ESP32</td></tr>
+      <tr><td>BLE Profile</td><td>HID (Keyboard + Mouse)</td></tr>
+      <tr><td>Display</td><td>SSD1306 128&times;64 OLED</td></tr>
+      <tr><td>Interface</td><td>I&sup2;C @ 0x3C</td></tr>
+      <tr><td>Input</td><td>Analog joystick + 2 buttons</td></tr>
+      <tr><td>Battery mon.</td><td>ADC pin 32, &frac12; voltage divider</td></tr>
+      <tr><td>Sleep timeout</td><td class="spec-highlight">3 min &rarr; deep sleep</td></tr>
+      <tr><td>Long press</td><td>1 s &rarr; mode activate</td></tr>
+      <tr><td>BT Classic</td><td>Disabled (saves ~70 KB RAM)</td></tr>
+      <tr><td>Device name</td><td>CtrlX</td></tr>
+    </table>
+  </div>
+  <div>
+    <div class="section-label">Navigation</div>
+    <h2 class="spec-group-title">Controls</h2>
+    <table class="spec-table">
+      <tr><td>BTN_DOWN</td><td>Scroll down menu</td></tr>
+      <tr><td>BTN_UP (short)</td><td>Scroll up menu</td></tr>
+      <tr><td>BTN_UP (1 s hold)</td><td class="spec-highlight">Activate selected mode</td></tr>
+      <tr><td>BTN_UP + BTN_DOWN</td><td>Return to menu</td></tr>
+      <tr><td>Joystick push</td><td>Mode-specific action</td></tr>
+      <tr><td>Idle 3 min</td><td>Auto deep sleep</td></tr>
+      <tr><td>Accel. deadzone</td><td>&plusmn;150 ADC units</td></tr>
+      <tr><td>Accel. formula</td><td>normalized&sup2; &times; 25</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="pinout-section">
+  <div class="section-label">GPIO Map</div>
+  <h2 class="section-title">Pinout</h2>
+  <div class="pin-grid">
+    <div class="pin-card">
+      <div><div class="pin-label">JOYSTICK X</div><div class="pin-role">Analog read</div></div>
+      <div class="pin-num">34</div>
+    </div>
+    <div class="pin-card">
+      <div><div class="pin-label">JOYSTICK Y</div><div class="pin-role">Analog read</div></div>
+      <div class="pin-num">35</div>
+    </div>
+    <div class="pin-card">
+      <div><div class="pin-label">JOY SWITCH</div><div class="pin-role">Input pullup</div></div>
+      <div class="pin-num">25</div>
+    </div>
+    <div class="pin-card">
+      <div><div class="pin-label">BTN UP</div><div class="pin-role">Input pullup</div></div>
+      <div class="pin-num">26</div>
+    </div>
+    <div class="pin-card">
+      <div><div class="pin-label">BTN DOWN</div><div class="pin-role">Input pullup</div></div>
+      <div class="pin-num">27</div>
+    </div>
+    <div class="pin-card">
+      <div><div class="pin-label">BATTERY</div><div class="pin-role">ADC monitor</div></div>
+      <div class="pin-num">32</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-brand">CtrlX</div>
+  <div class="footer-meta">
+    ESP32 BLE HID CONTROLLER<br>
+    FIRMWARE &middot; ARDUINO / C++<br>
+    BleCombo + Adafruit SSD1306
+  </div>
+</footer>
+
+</body>
+</html>
